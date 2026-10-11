@@ -221,6 +221,11 @@ void apply_sensor_configuration(struct config_filter *filter,
 
 	close(fd);
 
+	if (in == NULL) {
+		fprintf(stderr, "Skipping %s: %s\n", file, json_util_get_last_err());
+		return;
+	}
+
 	config = json_object_object_get(in, "config");
 	if (config != NULL) {
 		if (!check_config_filter(filter, config))
