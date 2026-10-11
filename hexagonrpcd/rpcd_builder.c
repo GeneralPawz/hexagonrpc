@@ -89,6 +89,21 @@ static struct hexagonfs_dirent *hfs_map(const char *name, const char *path)
 	return file;
 }
 
+static struct hexagonfs_dirent *hfs_map_rw(const char *name, const char *path)
+{
+	struct hexagonfs_dirent *file;
+
+	file = malloc(sizeof(struct hexagonfs_dirent));
+	if (file == NULL)
+		return NULL;
+
+	file->name = name;
+	file->ops = &hexagonfs_mapped_rw_ops;
+	file->u.phys = path;
+
+	return file;
+}
+
 static struct hexagonfs_dirent *hfs_map_or_empty(const char *name, const char *path)
 {
 	struct hexagonfs_dirent *file;
@@ -109,7 +124,8 @@ static struct hexagonfs_dirent *hfs_map_or_empty(const char *name, const char *p
  *
  * TODO: Make this free()-able with reference counts
  */
-struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
+struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp,
+					    const char *persist)
 {
 	char *acdbdata, *dsp_libs, *sns_cfg, *sns_reg, *sns_reg_config, *socinfo;
 	size_t n_prefix;
@@ -159,14 +175,22 @@ struct hexagonfs_dirent *construct_root_dir(const char *prefix, const char *dsp)
 	/*
 	 * Some platforms need this in / and some need it in /mnt/vendor. Form
 	 * a hard link between both locations.
+	 *
+	 * With a writable persist directory, the remote processor manages its
+	 * own state there (newer sensor firmware rebuilds the registry from
+	 * the configuration files and deletes stale entries). Otherwise the
+	 * registry is a read-only pre-generated one.
 	 */
-	persist_dir = hfs_mkdir("persist", 1,
-				hfs_mkdir("sensors", 1,
-					hfs_mkdir("registry", 1,
-						hfs_map("registry", sns_reg)
+	if (persist != NULL)
+		persist_dir = hfs_map_rw("persist", persist);
+	else
+		persist_dir = hfs_mkdir("persist", 1,
+					hfs_mkdir("sensors", 1,
+						hfs_mkdir("registry", 1,
+							hfs_map("registry", sns_reg)
+						)
 					)
-				)
-		      );
+			      );
 
 	/*
 	 * Some platforms need vendor in / and some need it in /system. Form

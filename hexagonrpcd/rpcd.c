@@ -76,6 +76,7 @@ static void print_usage(const char *argv0)
 	       "\t-d DSP\t\tDSP name (default: "")\n"
 	       "\t-f DEVICE\tFastRPC device node to attach to\n"
 	       "\t-p PROGRAM\tRun client program with shared file descriptor\n"
+	       "\t-P DIR\t\tWritable directory served as the DSP's /persist (default: read-only)\n"
 	       "\t-R DIR\t\tRoot directory of served files (default: /usr/share/qcom/)\n"
 	       "\t-s\t\tAttach to sensorspd\n"
 	       "\t-h\t\tPrint help and exit\n");
@@ -188,7 +189,8 @@ static int start_clients(size_t n_progs, const char **progs, pid_t *pids)
 	return 0;
 }
 
-static void *start_reverse_tunnel(int fd, const char *device_dir, const char *dsp)
+static void *start_reverse_tunnel(int fd, const char *device_dir, const char *dsp,
+				  const char *persist_dir)
 {
 	struct fastrpc_interface **ifaces;
 	struct hexagonfs_dirent *root_dir;
@@ -199,7 +201,7 @@ static void *start_reverse_tunnel(int fd, const char *device_dir, const char *ds
 	if (ifaces == NULL)
 		return NULL;
 
-	root_dir = construct_root_dir(device_dir, dsp);
+	root_dir = construct_root_dir(device_dir, dsp, persist_dir);
 
 	/*
 	 * The apps_remotectl interface patiently waits for this function to
@@ -348,6 +350,7 @@ int main(int argc, char* argv[])
 {
 	char *fastrpc_node = NULL;
 	const char *device_dir = "/usr/share/qcom/";
+	const char *persist_dir = NULL;
 	const char *dsp = "";
 	const char *create_shell = NULL;
 	const char *guessed_device_dir;
@@ -373,7 +376,7 @@ int main(int argc, char* argv[])
 	if (guessed_device_dir != NULL)
 		device_dir = guessed_device_dir;
 
-	while ((opt = getopt(argc, argv, "c:d:f:p:R:sh")) != -1) {
+	while ((opt = getopt(argc, argv, "c:d:f:p:P:R:sh")) != -1) {
 		switch (opt) {
 			case 'c':
 				create_shell = optarg;
@@ -387,6 +390,9 @@ int main(int argc, char* argv[])
 			case 'p':
 				progs[n_progs] = optarg;
 				n_progs++;
+				break;
+			case 'P':
+				persist_dir = optarg;
 				break;
 			case 'R':
 				device_dir = optarg;
@@ -438,7 +444,7 @@ int main(int argc, char* argv[])
 	if (ret)
 		goto err_close_dev;
 
-	start_reverse_tunnel(fd, device_dir, dsp);
+	start_reverse_tunnel(fd, device_dir, dsp, persist_dir);
 
 	terminate_clients(n_progs, pids);
 
