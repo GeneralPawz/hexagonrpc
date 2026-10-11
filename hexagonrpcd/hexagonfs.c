@@ -191,6 +191,156 @@ err:
 	return ret;
 }
 
+/*
+ * Walks to the directory holding the last segment of the path. On success,
+ * *parent is that directory and *last is a copy of the final segment, which
+ * the caller frees.
+ */
+static int walk_to_parent(struct hexagonfs_fd **fds, int rootfd, int dirfd,
+			  const char *name, struct hexagonfs_fd **parent,
+			  char **last)
+{
+	struct hexagonfs_fd *fd;
+	const char *curr = name;
+	const char *next;
+	char *segment;
+	bool expect_dir;
+	int selected = dirfd;
+	int ret = 0;
+
+	if (*curr == '/') {
+		selected = rootfd;
+
+		while (*curr == '/')
+			curr++;
+	}
+
+	fd = fds[selected];
+
+	while (true) {
+		segment = copy_segment_and_advance(curr, &expect_dir, &next);
+		if (segment == NULL) {
+			ret = -ENOMEM;
+			goto err;
+		}
+
+		if (*next == '\0')
+			break;
+
+		if (!strcmp(segment, "..")) {
+			fd = pop_dir(fd, fds[rootfd]);
+		} else if (strcmp(segment, ".")) {
+			ret = fd->ops->openat(fd, segment, true, &fd);
+		}
+
+		free(segment);
+		if (ret)
+			goto err;
+
+		curr = next;
+	}
+
+	if (segment[0] == '\0' || !strcmp(segment, ".") || !strcmp(segment, "..")) {
+		free(segment);
+		ret = -EINVAL;
+		goto err;
+	}
+
+	*parent = fd;
+	*last = segment;
+
+	return 0;
+
+err:
+	destroy_file_descriptor(fd);
+
+	return ret;
+}
+
+int hexagonfs_create(struct hexagonfs_fd **fds, int rootfd, int dirfd,
+		     const char *name, bool append)
+{
+	struct hexagonfs_fd *parent, *fd;
+	char *last;
+	int ret;
+
+	ret = walk_to_parent(fds, rootfd, dirfd, name, &parent, &last);
+	if (ret)
+		return ret;
+
+	if (parent->ops->create == NULL)
+		ret = -EROFS;
+	else
+		ret = parent->ops->create(parent, last, append, &fd);
+
+	free(last);
+
+	if (ret) {
+		destroy_file_descriptor(parent);
+		return ret;
+	}
+
+	ret = allocate_file_number(fds, fd);
+	if (ret < 0)
+		destroy_file_descriptor(fd);
+
+	return ret;
+}
+
+int hexagonfs_unlink(struct hexagonfs_fd **fds, int rootfd, int dirfd,
+		     const char *name)
+{
+	struct hexagonfs_fd *parent;
+	char *last;
+	int ret;
+
+	ret = walk_to_parent(fds, rootfd, dirfd, name, &parent, &last);
+	if (ret)
+		return ret;
+
+	if (parent->ops->unlink == NULL)
+		ret = -EROFS;
+	else
+		ret = parent->ops->unlink(parent, last);
+
+	free(last);
+	destroy_file_descriptor(parent);
+
+	return ret;
+}
+
+int hexagonfs_rename(struct hexagonfs_fd **fds, int rootfd, int dirfd,
+		     const char *old_name, const char *new_name)
+{
+	struct hexagonfs_fd *old_parent, *new_parent;
+	char *old_last, *new_last;
+	int ret;
+
+	ret = walk_to_parent(fds, rootfd, dirfd, old_name, &old_parent, &old_last);
+	if (ret)
+		return ret;
+
+	ret = walk_to_parent(fds, rootfd, dirfd, new_name, &new_parent, &new_last);
+	if (ret)
+		goto err_old;
+
+	// Both ends must be in the same kind of writable directory
+	if (old_parent->ops->rename == NULL
+	 || old_parent->ops->rename != new_parent->ops->rename)
+		ret = -EROFS;
+	else
+		ret = old_parent->ops->rename(old_parent, old_last,
+					      new_parent, new_last);
+
+	free(new_last);
+	destroy_file_descriptor(new_parent);
+err_old:
+	free(old_last);
+	destroy_file_descriptor(old_parent);
+
+	return ret;
+}
+
 int hexagonfs_close(struct hexagonfs_fd **fds, int fileno)
 {
 	struct hexagonfs_fd *fd;
@@ -242,6 +392,23 @@ ssize_t hexagonfs_read(struct hexagonfs_fd **fds, int fileno, size_t size, void 
 		return -ENOSYS;
 
 	return fd->ops->read(fd, size, ptr);
+}
+
+ssize_t hexagonfs_write(struct hexagonfs_fd **fds, int fileno, size_t size, const void *ptr)
+{
+	struct hexagonfs_fd *fd;
+
+	if (fileno < 0 || fileno >= HEXAGONFS_MAX_FD)
+		return -EBADF;
+
+	fd = fds[fileno];
+	if (fd == NULL)
+		return -EBADF;
+
+	if (fd->ops->write == NULL)
+		return -EBADF;
+
+	return fd->ops->write(fd, size, ptr);
 }
 
 int hexagonfs_readdir(struct hexagonfs_fd **fds, int fileno, size_t ent_size, char *ent)
