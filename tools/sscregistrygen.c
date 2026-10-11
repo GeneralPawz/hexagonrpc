@@ -147,7 +147,7 @@ void create_registry_file(int dirfd, const char *name, struct json_object *obj)
 						  JSON_C_TO_STRING_PLAIN
 						| JSON_C_TO_STRING_NOSLASHESCAPE);
 
-	fd = openat(dirfd, name, O_WRONLY | O_CREAT,
+	fd = openat(dirfd, name, O_WRONLY | O_CREAT | O_TRUNC,
 		    (mode_t) (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH));
 	if (fd == -1)
 		return;
