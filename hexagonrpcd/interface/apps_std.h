@@ -34,6 +34,9 @@ extern struct hrpc_method_def_interp4 apps_std_opendir_def;
 extern struct hrpc_method_def_interp4 apps_std_closedir_def;
 extern struct hrpc_method_def_interp4 apps_std_readdir_def;
 extern struct hrpc_method_def_interp4 apps_std_mkdir_def;
+extern const struct hrpc_method_def_interp4 apps_std_fremove_def;
+extern const struct hrpc_method_def_interp4 apps_std_fwrite_def;
+extern const struct hrpc_method_def_interp4 apps_std_frename_def;
 extern struct hrpc_method_def_interp4 apps_std_stat_def;
 
 #endif /* INTERFACE_APPS_STD_H */
