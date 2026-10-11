@@ -51,4 +51,20 @@ static inline int adsp_listener_next2(int fd,
 			  inbufs_size, (void *) inbufs);
 }
 
+/*
+ * Fetches the part of a request's input buffers that did not fit into the
+ * buffer given to adsp_listener_next2(), starting at the given offset.
+ */
+extern const struct hrpc_method_def_interp4 adsp_listener_get_in_bufs2_def;
+static inline int adsp_listener_get_in_bufs2(int fd,
+					     uint32_t rctx,
+					     uint32_t offset,
+					     uint32_t *inbufs_len,
+					     uint32_t inbufs_size, char *inbufs)
+{
+	return hexagonrpc(&adsp_listener_get_in_bufs2_def, fd, ADSP_LISTENER,
+			  rctx, offset, inbufs_len,
+			  inbufs_size, (void *) inbufs);
+}
+
 #endif /* INTERFACE_ADSP_LISTENER_H */

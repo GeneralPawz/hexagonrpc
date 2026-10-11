@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "interface/adsp_listener.h"
 #include "iobuffer.h"
@@ -425,8 +426,11 @@ static int return_for_next_invoke(int fd,
 				  struct fastrpc_io_buffer **decoded)
 {
 	struct fastrpc_decoder_context *ctx;
-	char inbufs[256];
+	char small_inbufs[256];
+	char *inbufs = small_inbufs;
+	char *large_inbufs = NULL;
 	char *outbufs = NULL;
+	uint32_t rest_len;
 	uint32_t inbufs_len;
 	uint32_t outbufs_len;
 	int ret;
@@ -447,7 +451,7 @@ static int return_for_next_invoke(int fd,
 				  *rctx, result,
 				  outbufs_len, outbufs,
 				  rctx, handle, sc,
-				  &inbufs_len, 256, inbufs);
+				  &inbufs_len, sizeof(small_inbufs), small_inbufs);
 	if (ret) {
 		if (ret == -1)
 			perror("Could not fetch next FastRPC message");
@@ -457,10 +461,30 @@ static int return_for_next_invoke(int fd,
 		goto err_free_outbufs;
 	}
 
-	if (inbufs_len > 256) {
-		fprintf(stderr, "Large (>256B) input buffers aren't implemented\n");
-		ret = -1;
-		goto err_free_outbufs;
+	/*
+	 * Input buffers that don't fit (e.g. a remote processor writing a file)
+	 * are fetched in a second call, as the reference listener does.
+	 */
+	if (inbufs_len > sizeof(small_inbufs)) {
+		large_inbufs = malloc(inbufs_len);
+		if (large_inbufs == NULL) {
+			perror("Could not allocate input buffer");
+			ret = -1;
+			goto err_free_outbufs;
+		}
+
+		memcpy(large_inbufs, small_inbufs, sizeof(small_inbufs));
+
+		ret = adsp_listener_get_in_bufs2(fd, *rctx, sizeof(small_inbufs),
+						 &rest_len,
+						 inbufs_len - sizeof(small_inbufs),
+						 &large_inbufs[sizeof(small_inbufs)]);
+		if (ret) {
+			fprintf(stderr, "Could not fetch large input buffers: %d\n", ret);
+			goto err_free_outbufs;
+		}
+
+		inbufs = large_inbufs;
 	}
 
 	ctx = inbuf_decode_start(*sc);
@@ -485,6 +509,7 @@ static int return_for_next_invoke(int fd,
 	*decoded = inbuf_decode_finish(ctx);
 
 err_free_outbufs:
+	free(large_inbufs);
 	free(outbufs);
 	return ret;
 }

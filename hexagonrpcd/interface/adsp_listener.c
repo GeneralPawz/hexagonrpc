@@ -48,3 +48,18 @@ const struct hrpc_method_def_interp4 adsp_listener_next2_def = {
 	.n_inner_types = 0,
 	.inner_types = NULL,
 };
+
+struct hrpc_arg_def_interp4 adsp_listener_get_in_bufs2_args[] = {
+	{ HRPC_ARG_WORD, sizeof(uint32_t) },
+	{ HRPC_ARG_WORD, sizeof(uint32_t) },
+	{ HRPC_ARG_OUT_BLOB, sizeof(uint32_t) },
+	{ HRPC_ARG_OUT_BLOB_SEQ, sizeof(char) },
+};
+
+const struct hrpc_method_def_interp4 adsp_listener_get_in_bufs2_def = {
+	.msg_id = 5,
+	.n_args = HRPC_ARRAY_SIZE(adsp_listener_get_in_bufs2_args),
+	.args = adsp_listener_get_in_bufs2_args,
+	.n_inner_types = 0,
+	.inner_types = NULL,
+};
