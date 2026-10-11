@@ -203,10 +203,43 @@ bool check_config_filter(struct config_filter *filter, struct json_object *confi
 	return true;
 }
 
-void apply_sensor_configuration(struct config_filter *filter,
-				int indir, int outdir, const char *file)
+/*
+ * Merges a group from a later configuration file into the same group from an
+ * earlier one. Registry entries are addressed per item, so a later file
+ * overrides single items (objects with a "type") and adds to subgroups
+ * instead of replacing the whole group, as calibration overlays expect.
+ */
+void merge_group(struct json_object *dst, struct json_object *src)
 {
-	struct json_object *in;
+	struct json_object_iterator iter, end;
+	struct json_object *cur, *val;
+	const char *key;
+
+	iter = json_object_iter_begin(src);
+	end = json_object_iter_end(src);
+
+	while (!json_object_iter_equal(&iter, &end)) {
+		key = json_object_iter_peek_name(&iter);
+		val = json_object_iter_peek_value(&iter);
+
+		if (json_object_object_get_ex(dst, key, &cur)
+		 && json_object_is_type(cur, json_type_object)
+		 && json_object_is_type(val, json_type_object)
+		 && !json_object_object_get_ex(val, "type", NULL)) {
+			merge_group(cur, val);
+		} else {
+			json_object_object_add(dst, key, json_object_get(val));
+		}
+
+		json_object_iter_next(&iter);
+	}
+}
+
+void apply_sensor_configuration(struct config_filter *filter,
+				int indir, struct json_object *groups,
+				const char *file)
+{
+	struct json_object *in, *existing;
 	struct json_object *config;
 	const char *name;
 	struct json_object *val;
@@ -239,11 +272,56 @@ void apply_sensor_configuration(struct config_filter *filter,
 		name = json_object_iter_peek_name(&iter);
 		val = json_object_iter_peek_value(&iter);
 
-		if (strcmp(name, "config"))
-			create_registry_file(outdir, name, val);
+		if (!strcmp(name, "config")) {
+			// not a registry group
+		} else if (json_object_object_get_ex(groups, name, &existing)) {
+			merge_group(existing, val);
+		} else {
+			json_object_object_add(groups, name, json_object_get(val));
+		}
 
 		json_object_iter_next(&iter);
 	}
+
+	json_object_put(in);
+}
+
+/*
+ * Applies the files named in json.lst, one per line, in that order: later
+ * files override earlier ones. Returns false if the directory has no json.lst.
+ */
+bool apply_json_list(struct config_filter *filter, int indirfd,
+		     struct json_object *groups)
+{
+	char *line = NULL;
+	size_t cap = 0;
+	ssize_t len;
+	FILE *list;
+	int fd;
+
+	fd = openat(indirfd, "json.lst", O_RDONLY);
+	if (fd == -1)
+		return false;
+
+	list = fdopen(fd, "r");
+	if (list == NULL) {
+		close(fd);
+		return false;
+	}
+
+	while ((len = getline(&line, &cap, list)) != -1) {
+		while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'
+				|| line[len - 1] == ' ' || line[len - 1] == '\t'))
+			line[--len] = '\0';
+
+		if (len > 0)
+			apply_sensor_configuration(filter, indirfd, groups, line);
+	}
+
+	free(line);
+	fclose(list);
+
+	return true;
 }
 
 int main(int argc, char **argv)
@@ -252,6 +330,8 @@ int main(int argc, char **argv)
 	DIR *indir;
 	int indirfd, outdirfd;
 	struct config_filter filter;
+	struct json_object_iterator iter, end;
+	struct json_object *groups;
 	int opt;
 
 	filter.hw_platform = NULL;
@@ -301,18 +381,34 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	dirent = readdir(indir);
+	groups = json_object_new_object();
 
-	while (dirent != NULL) {
-		if (!strcmp(dirent->d_name, ".")
-		 || !strcmp(dirent->d_name, ".."))
-			goto next;
-
-		apply_sensor_configuration(&filter, indirfd, outdirfd, dirent->d_name);
-
-	next:
+	if (!apply_json_list(&filter, indirfd, groups)) {
 		dirent = readdir(indir);
+
+		while (dirent != NULL) {
+			if (!strcmp(dirent->d_name, ".")
+			 || !strcmp(dirent->d_name, ".."))
+				goto next;
+
+			apply_sensor_configuration(&filter, indirfd, groups,
+						   dirent->d_name);
+
+		next:
+			dirent = readdir(indir);
+		}
 	}
+
+	iter = json_object_iter_begin(groups);
+	end = json_object_iter_end(groups);
+
+	while (!json_object_iter_equal(&iter, &end)) {
+		create_registry_file(outdirfd, json_object_iter_peek_name(&iter),
+				     json_object_iter_peek_value(&iter));
+		json_object_iter_next(&iter);
+	}
+
+	json_object_put(groups);
 
 	return 0;
 }
